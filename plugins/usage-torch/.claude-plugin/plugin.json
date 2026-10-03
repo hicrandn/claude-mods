@@ -3,9 +3,12 @@
   "displayName": "Usage Torch",
   "version": "0.1.0",
   "description": "Your Claude usage limit, as a tiny torchbearer whose flame fades as you use it.",
-  "author": { "name": "hicrandn" },
+  "author": {
+    "name": "hicrandn"
+  },
   "license": "MIT",
   "repository": "https://github.com/hicrandn/claude-mods",
+  "types": "./types/index.d.ts",
   "userConfig": {
     "tiredBelowPercent": {
       "type": "number",
