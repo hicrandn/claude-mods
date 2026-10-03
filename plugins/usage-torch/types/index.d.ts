@@ -15,6 +15,8 @@ export type TorchView = {
   /** The rate-limit window shown (`five_hour`, `seven_day`); null in a demo. */
   kind: string | null
   isWaking: boolean
+  /** True while the session has had no reading yet: the torchbearer shows, waiting for figures. */
+  isPending?: boolean
 }
 
 declare module 'claude-code' {

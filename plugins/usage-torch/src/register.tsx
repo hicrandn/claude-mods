@@ -14,7 +14,7 @@ const countdown = atom({ plugin: 'usage-torch', key: 'countdown' } as const, '')
 const RASTER = 'torch'
 const SIZE_KEY = 'size'
 const SIZES: readonly TorchSize[] = ['compact', 'full']
-const DEFAULT_SIZE: TorchSize = 'compact'
+const DEFAULT_SIZE: TorchSize = 'full'
 const BAR_CELLS = 10
 // The bar takes the flame's color for the state: bright, low, out.
 const BAR_COLORS: Record<TorchLook, string> = { awake: '#EF9F27', tired: '#D85A30', sleep: '#888780' }
@@ -30,6 +30,8 @@ let reduceMotion = false
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
 // The last real reading: the window closest to its limit.
 let real: { percentUsed: number; resetsAt: number | null; kind: string | null } | null = null
+// Whether a measurement came in: before one, the band shows the torchbearer waiting.
+let measured = false
 let bandId: string | undefined
 let drawnSize: TorchSize = DEFAULT_SIZE
 let isWorking = false
@@ -77,6 +79,11 @@ function realView(now: number): TorchView | null {
   return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt, real.kind)
 }
 
+// Before the first measurement the torchbearer waits; after one with no windows (no subscription) it hides.
+function shownView(now: number): TorchView | null {
+  return realView(now) ?? (measured ? null : { ...viewFor('awake', now, 100, null), isPending: true })
+}
+
 // The window that binds first: the most used of those the last response reported.
 function readingOf(limits: readonly SessionRateLimit[]) {
   if (limits.length === 0) return null
@@ -88,7 +95,7 @@ function readingOf(limits: readonly SessionRateLimit[]) {
 async function relight($: EngineInterface, now: number) {
   wakeStep = 0
   const isDemo = (await read($, demo)) !== null
-  await update($, view, () => (isDemo ? viewFor('awake', now, 100, null) : realView(now)))
+  await update($, view, () => (isDemo ? viewFor('awake', now, 100, null) : shownView(now)))
   $.ui.toast(text.WAKE_TOAST)
 }
 
@@ -96,7 +103,7 @@ async function relight($: EngineInterface, now: number) {
 async function showReal($: EngineInterface) {
   if ((await read($, demo)) !== null) return
   const now = await $.clock.now()
-  const next = realView(now)
+  const next = shownView(now)
   const cur = await read($, view)
   if (next?.look === 'sleep' && next.resetsAt !== null) {
     const left = formatCountdown(next.resetsAt - now)
@@ -113,7 +120,9 @@ async function showReal($: EngineInterface) {
     return
   }
   await update($, view, () =>
-    next.look === cur.look ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt, kind: next.kind } : next,
+    next.look === cur.look
+      ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt, kind: next.kind, isPending: next.isPending }
+      : next,
   )
 }
 
@@ -184,11 +193,11 @@ export const register: Register = (on, options) => {
     return result
   })
 
+  // Every measurement counts: the first one with no windows is what hides the waiting band.
   on('session.measure', async ($, e, next) => {
-    if (e.changed.includes('rateLimits')) {
-      real = readingOf(e.rateLimits)
-      await showReal($)
-    }
+    measured = true
+    real = readingOf(e.rateLimits)
+    await showReal($)
     return next(e)
   })
 
@@ -217,7 +226,7 @@ export const register: Register = (on, options) => {
 
     if (sub === 'status') {
       const v = await read($, view)
-      if (v === null) return { text: text.NO_READING }
+      if (v === null || v.isPending === true) return { text: text.NO_READING }
       return { text: `Usage Torch: ${text.usageLine(v.percentLeft, v.kind, clockOf(v.resetsAt))}` }
     }
 
@@ -249,11 +258,12 @@ export const register: Register = (on, options) => {
     isWorking = e.props.isWorking
 
     const clock = clockOf(v.resetsAt)
-    const usage = text.usageLine(v.percentLeft, v.kind, clock)
+    const usage = v.isPending === true ? text.WAITING : text.usageLine(v.percentLeft, v.kind, clock)
 
     if (e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>{`${text.oneLine(v.percentLeft)} · ${usage}`}</Text>
+      const head = v.isPending === true ? 'Usage Torch' : text.oneLine(v.percentLeft)
+      return <Text dimColor>{`${head} · ${usage}`}</Text>
     }
 
     const { Box, Raster, Text } = $.ui.resolve(e)
@@ -269,7 +279,7 @@ export const register: Register = (on, options) => {
           <Text color={BAR_COLORS[v.look]} bold>
             {text.COMPACT_LABEL}
           </Text>
-          <Text color={BAR_COLORS[v.look]}>{barOf(v.percentLeft)}</Text>
+          {v.isPending !== true && <Text color={BAR_COLORS[v.look]}>{barOf(v.percentLeft)}</Text>}
           <Text wrap="truncate-end" dimColor>
             {isOut
               ? [text.OUT_OF_LIGHT, isResting ? `${left} · ${text.relightsAt(clock)}` : ''].filter(Boolean).join(' · ')

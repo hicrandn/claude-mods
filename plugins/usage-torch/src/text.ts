@@ -38,4 +38,5 @@ export const DEMO_OFF = 'Usage Torch demo off.'
 export const USAGE =
   'Usage: /torch, /torch compact, /torch full, /torch status, /torch demo awake|tired|sleep|wake, /torch demo off'
 export const SIZE_SET = (size: string): string => `Usage Torch band: ${size}.`
+export const WAITING = 'Usage shows after the first reply'
 export const NO_READING = 'Usage Torch has no usage reading yet. It arrives with the first reply.'

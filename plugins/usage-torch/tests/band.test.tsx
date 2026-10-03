@@ -69,15 +69,13 @@ test('desktop gets one line of text', async ($, on) => {
   await ui.unmount()
 })
 
-test('demo off clears the band', async ($, on) => {
-  engineBand(on)
+test('demo off before any reading goes back to the waiting torchbearer', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await $.command.run({ command: 'torch', args: 'demo awake' })
   await $.command.run({ command: 'torch', args: 'demo off' })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ key: 'torch' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Usage shows after the first reply' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -115,6 +113,7 @@ const startWith = async (
   on('command.register', () => ({ value: undefined }) as never)
   on('settings.read', () => ({ value: {} }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits } }) as never)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/' } as never)
 }
 
@@ -162,10 +161,11 @@ test('demo off goes back to the real reading', async ($, on) => {
   await ui.unmount()
 })
 
-test('compact is the default: one line with the bar, what is left and when it resets', async ($, on) => {
+test('compact is one line with the bar, what is left and when it resets', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 38, resetsAt: '2026-10-03T15:30:00Z' }])
+  await $.command.run({ command: 'torch', args: 'compact' })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '▰▰▰▰▰▰▱▱▱▱' })).toBeDefined()
@@ -198,12 +198,67 @@ test('/torch switches the size and /torch status reports the figures', async ($,
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 25 }])
-  expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: full.')
   expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: compact.')
+  expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: full.')
   expect((await $.command.run({ command: 'torch', args: 'status' })).text).toBe('Usage Torch: 75% left · 5-hour limit')
 })
 
 test('the usage line leaves out a kind an older view does not have', () => {
   expect(usageLine(70, undefined, '')).toBe('70% left')
   expect(usageLine(70, 'seven_day', '15:30')).toBe('70% left · weekly limit · resets 15:30')
+})
+
+test('full is the default: the torchbearer shows with no size picked', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [{ kind: 'five_hour', percentUsed: 38 }])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Raster', key: 'torch' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '62% left · 5-hour limit' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('right after install the torchbearer shows, waiting for the first reply', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Raster', key: 'torch' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Usage shows after the first reply' })).toBeDefined()
+  expect((await $.command.run({ command: 'torch', args: 'status' })).text).toContain('no usage reading yet')
+  await ui.unmount()
+})
+
+test('the first reading replaces the waiting line', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [])
+  await $.session.measure({ context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 38 }], changed: ['rateLimits'] } as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '62% left · 5-hour limit' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Usage shows after the first reply' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a reply with no windows (no subscription) hides the band', async ($, on) => {
+  engineBand(on)
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [])
+  await $.session.measure({ context: {}, rateLimits: [], changed: ['context'] } as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'torch' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('compact while waiting shows no bar', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [])
+  await $.command.run({ command: 'torch', args: 'compact' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /▰|▱/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Usage shows after the first reply' })).toBeDefined()
+  await ui.unmount()
 })
