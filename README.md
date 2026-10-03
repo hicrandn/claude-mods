@@ -17,10 +17,8 @@ claude plugin install usage-torch@hicran-mods
 ```
 
 ## Try it
-
-1. Install it (see below) and start a new Claude Code session.
-2. Send any message. The band shows up after the first reply, when the usage figures arrive.
-3. Want to see the other states right away? Run `/torch demo tired` or `/torch demo sleep`, then `/torch demo off` to go back to your real usage.
+ Install it (see below) and start a new Claude Code session.
+The torchbearer shows up right away. Send any message: after the first reply, the waiting line turns into your real usage.
 
 Mods need Claude Code 2.1.287 or newer.
 
