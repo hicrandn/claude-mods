@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
-import type { TorchDemo, TorchLook, TorchView } from '../types'
-import { packCells, poseFor, SCENE_COLUMNS, SCENE_ROWS, sceneCells, WAKE_STEPS, wakePose } from './frames.ts'
+import type { TorchDemo, TorchLook, TorchSize, TorchView } from '../types'
+import { packCells, poseFor, sceneCells, sceneColumns, sceneRows, WAKE_STEPS, wakePose } from './frames.ts'
 import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lineText, lookFor, nextLine } from './logic.ts'
 import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
@@ -12,6 +12,12 @@ const view = atom({ plugin: 'usage-torch', key: 'view' } as const, null)
 const countdown = atom({ plugin: 'usage-torch', key: 'countdown' } as const, '')
 
 const RASTER = 'torch'
+const SIZE_KEY = 'size'
+const SIZES: readonly TorchSize[] = ['compact', 'small', 'full']
+const DEFAULT_SIZE: TorchSize = 'small'
+const BAR_CELLS = 10
+// The bar takes the flame's color for the state: bright, low, out.
+const BAR_COLORS: Record<TorchLook, string> = { awake: '#EF9F27', tired: '#D85A30', sleep: '#888780' }
 const DEMOS: readonly TorchDemo[] = ['awake', 'tired', 'sleep', 'wake']
 const DEMO_PERCENT_LEFT: Record<TorchLook, number> = { awake: 82, tired: 18, sleep: 0 }
 const DEMO_RESET_MS = 12 * 60_000 + 30_000
@@ -23,8 +29,9 @@ const WAKE_STEP_MS = 400
 let reduceMotion = false
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
 // The last real reading: the window closest to its limit.
-let real: { percentUsed: number; resetsAt: number | null } | null = null
+let real: { percentUsed: number; resetsAt: number | null; kind: string | null } | null = null
 let bandId: string | undefined
+let drawnSize: TorchSize = DEFAULT_SIZE
 let isWorking = false
 let tick = 0
 let wakeStep = 0
@@ -35,19 +42,39 @@ function poseOf(v: TorchView) {
   return wakeStep < WAKE_LEAD ? poseFor('sleep', tick) : wakePose(wakeStep - WAKE_LEAD)
 }
 
-const viewFor = (look: TorchLook, now: number, percentLeft: number, resetsAt: number | null): TorchView => ({
+const viewFor = (
+  look: TorchLook,
+  now: number,
+  percentLeft: number,
+  resetsAt: number | null,
+  kind: string | null = null,
+): TorchView => ({
   look,
   lineIndex: 0,
   lineAt: now,
   percentLeft,
   resetsAt,
+  kind,
   isWaking: false,
 })
+
+const clockOf = (resetsAt: number | null): string =>
+  resetsAt === null ? '' : formatClock(resetsAt, -new Date(resetsAt).getTimezoneOffset())
+
+const barOf = (percentLeft: number): string => {
+  const lit = Math.round((Math.min(100, Math.max(0, percentLeft)) / 100) * BAR_CELLS)
+  return '▰'.repeat(lit) + '▱'.repeat(BAR_CELLS - lit)
+}
+
+async function sizeOf($: EngineInterface): Promise<TorchSize> {
+  const stored = await $.store.get(SIZE_KEY)
+  return SIZES.find(s => s === stored) ?? DEFAULT_SIZE
+}
 
 function realView(now: number): TorchView | null {
   if (real === null) return null
   const percentLeft = Math.max(0, Math.round(100 - real.percentUsed))
-  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt)
+  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt, real.kind)
 }
 
 // The window that binds first: the most used of those the last response reported.
@@ -55,7 +82,7 @@ function readingOf(limits: readonly SessionRateLimit[]) {
   if (limits.length === 0) return null
   const w = limits.reduce((a, b) => (b.percentUsed > a.percentUsed ? b : a))
   const resetsAt = w.resetsAt === undefined ? null : Date.parse(w.resetsAt)
-  return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt }
+  return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt, kind: w.kind }
 }
 
 async function relight($: EngineInterface, now: number) {
@@ -112,7 +139,7 @@ async function step($: EngineInterface) {
     // No turn runs while the limit is hit, so the window's reset is noticed here.
     if (v.look === 'sleep' && !v.isWaking && v.resetsAt !== null && now >= v.resetsAt && real !== null) {
       if ((await read($, demo)) === null) {
-        real = { percentUsed: 0, resetsAt: null }
+        real = { percentUsed: 0, resetsAt: null, kind: real.kind }
         await showReal($)
       }
     }
@@ -123,8 +150,9 @@ async function step($: EngineInterface) {
     }
 
     const isMoving = v.isWaking || !reduceMotion
-    if (bandId !== undefined && isMoving) {
-      $.ui.blit({ requestId: bandId, key: RASTER, cells: packCells(sceneCells(poseOf(v))) }).catch(() => undefined)
+    if (bandId !== undefined && isMoving && drawnSize !== 'compact') {
+      const cells = packCells(sceneCells(poseOf(v), drawnSize))
+      $.ui.blit({ requestId: bandId, key: RASTER, cells }).catch(() => undefined)
     }
   }
 
@@ -174,6 +202,25 @@ export const register: Register = (on, options) => {
       return { text: text.DEMO_OFF }
     }
 
+    const named = SIZES.find(s => s === sub)
+    if (named !== undefined) {
+      await $.store.set(SIZE_KEY, named)
+      return { text: text.SIZE_SET(named) }
+    }
+
+    // A bare /torch steps through the sizes: compact, small, full, and round again.
+    if (sub === undefined || sub === '') {
+      const size = SIZES[(SIZES.indexOf(await sizeOf($)) + 1) % SIZES.length]!
+      await $.store.set(SIZE_KEY, size)
+      return { text: text.SIZE_SET(size) }
+    }
+
+    if (sub === 'status') {
+      const v = await read($, view)
+      if (v === null) return { text: text.NO_READING }
+      return { text: `Usage Torch: ${text.usageLine(v.percentLeft, v.kind, clockOf(v.resetsAt))}` }
+    }
+
     const chosen = DEMOS.find(d => d === arg)
     if (sub === 'demo' && chosen !== undefined) {
       const now = await $.clock.now()
@@ -201,21 +248,44 @@ export const register: Register = (on, options) => {
     bandId = e.requestId
     isWorking = e.props.isWorking
 
+    const clock = clockOf(v.resetsAt)
+    const usage = text.usageLine(v.percentLeft, v.kind, clock)
+
     if (e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>{text.oneLine(v.percentLeft)}</Text>
+      return <Text dimColor>{`${text.oneLine(v.percentLeft)} · ${usage}`}</Text>
     }
 
     const { Box, Raster, Text } = $.ui.resolve(e)
     const isResting = v.look === 'sleep' && !v.isWaking && v.resetsAt !== null
     const left = isResting ? await read($, countdown) : ''
-    const clock = v.resetsAt === null ? '' : formatClock(v.resetsAt, -new Date(v.resetsAt).getTimezoneOffset())
+    const size = await sizeOf($)
+    drawnSize = size
 
+    if (size === 'compact') {
+      const isOut = v.look === 'sleep' && !v.isWaking
+      return (
+        <Box flexDirection="row" gap={1}>
+          <Text color={BAR_COLORS[v.look]} bold>
+            {text.COMPACT_LABEL}
+          </Text>
+          <Text color={BAR_COLORS[v.look]}>{barOf(v.percentLeft)}</Text>
+          <Text wrap="truncate-end" dimColor>
+            {isOut
+              ? [text.OUT_OF_LIGHT, isResting ? `${left} · ${text.relightsAt(clock)}` : ''].filter(Boolean).join(' · ')
+              : usage}
+          </Text>
+        </Box>
+      )
+    }
+
+    const columns = sceneColumns(size)
+    const isSmall = size === 'small'
     return (
       <Box flexDirection="row">
-        <Box flexDirection="column" width={SCENE_COLUMNS} flexShrink={0}>
-          <Raster key={RASTER} columns={SCENE_COLUMNS} rows={SCENE_ROWS} cells={packCells(sceneCells(poseOf(v)))} />
-          {isResting && (
+        <Box flexDirection="column" width={columns} flexShrink={0}>
+          <Raster key={RASTER} columns={columns} rows={sceneRows(size)} cells={packCells(sceneCells(poseOf(v), size))} />
+          {isResting && !isSmall && (
             <Box flexDirection="row" gap={1}>
               <Text bold>{left}</Text>
               <Text dimColor>{text.relightsAt(clock)}</Text>
@@ -223,10 +293,25 @@ export const register: Register = (on, options) => {
           )}
         </Box>
         {!v.isWaking && (
-          <Box marginTop={3} marginLeft={1} flexShrink={1} borderStyle="round" borderDimColor paddingX={1}>
-            <Text wrap="truncate-end" dimColor={v.look === 'sleep'}>
-              {lineText({ look: v.look, index: v.lineIndex, at: v.lineAt })}
-            </Text>
+          <Box flexDirection="column" marginTop={isSmall ? 1 : 3} marginLeft={1} flexShrink={1}>
+            <Box borderStyle="round" borderDimColor paddingX={1}>
+              <Text wrap="truncate-end" dimColor={v.look === 'sleep'}>
+                {lineText({ look: v.look, index: v.lineIndex, at: v.lineAt })}
+              </Text>
+            </Box>
+            {!isResting && (
+              <Box paddingX={1}>
+                <Text wrap="truncate-end" dimColor>
+                  {usage}
+                </Text>
+              </Box>
+            )}
+            {isResting && isSmall && (
+              <Box flexDirection="row" gap={1} paddingX={1}>
+                <Text bold>{left}</Text>
+                <Text dimColor>{text.relightsAt(clock)}</Text>
+              </Box>
+            )}
           </Box>
         )}
       </Box>

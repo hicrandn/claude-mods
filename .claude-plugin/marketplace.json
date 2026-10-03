@@ -9,7 +9,7 @@
       "name": "usage-torch",
       "source": "./plugins/usage-torch",
       "description": "Your Claude usage limit, as a tiny torchbearer whose flame fades as you use it.",
-      "version": "0.2.0"
+      "version": "0.3.0"
     }
   ]
 }

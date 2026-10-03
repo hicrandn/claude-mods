@@ -122,15 +122,72 @@ const ZZ_COLOR: Readonly<Record<string, number>> = {
   Z: hexToRgb(PALETTE.g!),
 }
 
-/** Cells for a pose, row-major `[codePoint, fg, bg]`, SCENE_COLUMNS by SCENE_ROWS. */
-export function sceneCells(pose: Pose): Uint32Array {
-  const rows = composeRows(pose)
+// The small torchbearer is the same sprite at half size, derived here, never drawn apart.
+// Each 2x2 block becomes one pixel. The body's blocks start one column left so each eye
+// stays its own pixel; the torch is its own layer whose blocks start at column 18 so the
+// handle is one pixel under a centred flame.
+const SMALL_SIZE = SPRITE_SIZE / 2
+const TORCH_COLUMN = FLAME_ORIGIN.column
+const TORCH_PIXELS = 'kKwXOYyg'
+// Pixels that win their block whenever present, so faces and flames survive the halving.
+const FEATURE_PIXELS = 'EeGzSyYOXg'
+
+function halveBlock(px: readonly string[], minSolid: number): string {
+  const solid = px.filter(p => p !== '.')
+  if (solid.length < minSolid) return '.'
+  const feature = [...FEATURE_PIXELS].find(f => px.includes(f))
+  if (feature !== undefined) return feature
+  const counts = new Map<string, number>()
+  for (const p of solid) counts.set(p, (counts.get(p) ?? 0) + 1)
+  return [...counts].reduce((a, b) => (b[1] > a[1] ? b : a))[0]
+}
+
+/** A pose's pixel rows at half size: SPRITE_SIZE / 2 square. */
+export function halveRows(rows: readonly string[]): string[] {
+  const at = (y: number, x: number) => rows[y]?.[x] ?? '.'
+  const blockAt = (r: number, c: number, keep: (p: string, x: number) => boolean) =>
+    [[r, c], [r, c + 1], [r + 1, c], [r + 1, c + 1]].map(([y, x]) => (keep(at(y!, x!), x!) ? at(y!, x!) : '.'))
+  const out: string[] = []
+  for (let r = 0; r < rows.length; r += 2) {
+    const body: string[] = []
+    for (let c = -1; c < TORCH_COLUMN; c += 2) body.push(halveBlock(blockAt(r, c, (_, x) => x < TORCH_COLUMN), 2))
+    const torch: string[] = []
+    for (let c = TORCH_COLUMN - 1; c < SPRITE_SIZE; c += 2) {
+      torch.push(halveBlock(blockAt(r, c, (p, x) => x >= TORCH_COLUMN && TORCH_PIXELS.includes(p)), 1))
+    }
+    // The torch's first column shares the body's last: it shows there only where it has a pixel.
+    if (torch[0] !== '.') body[body.length - 1] = torch[0]!
+    out.push([...body, ...torch.slice(1)].join(''))
+  }
+  return out
+}
+
+export type SceneSize = 'small' | 'full'
+
+// The small scene: the half-size sprite, two columns for one z, the same pixel of headroom.
+export const SMALL_SCENE_COLUMNS = SMALL_SIZE + 2
+export const SMALL_SCENE_ROWS = Math.ceil((SMALL_SIZE + 1) / 2)
+
+export const sceneColumns = (size: SceneSize): number => (size === 'small' ? SMALL_SCENE_COLUMNS : SCENE_COLUMNS)
+export const sceneRows = (size: SceneSize): number => (size === 'small' ? SMALL_SCENE_ROWS : SCENE_ROWS)
+
+/** The small scene's z at phase 0-3: one z growing into a Z as it rises beside the flame. */
+export function smallZzGlyphs(phase: number): [number, number, string][] {
+  return [[3 - phase, SMALL_SIZE + (phase % 2), phase < 2 ? 'z' : 'Z']]
+}
+
+/** Cells for a pose, row-major `[codePoint, fg, bg]`, sceneColumns(size) by sceneRows(size). */
+export function sceneCells(pose: Pose, size: SceneSize = 'full'): Uint32Array {
+  const full = composeRows(pose)
+  const rows = size === 'small' ? halveRows(full) : full
+  const columns = sceneColumns(size)
+  const height = sceneRows(size)
   const offset = 1 - pose.lift
-  const glyphs = pose.zz === null ? [] : zzGlyphs(pose.zz)
-  const out = new Uint32Array(SCENE_COLUMNS * SCENE_ROWS * 3)
+  const glyphs = pose.zz === null ? [] : size === 'small' ? smallZzGlyphs(pose.zz) : zzGlyphs(pose.zz)
+  const out = new Uint32Array(columns * height * 3)
   let i = 0
-  for (let r = 0; r < SCENE_ROWS; r++) {
-    for (let c = 0; c < SCENE_COLUMNS; c++) {
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < columns; c++) {
       const glyph = glyphs.find(([gr, gc]) => gr === r && gc === c)
       const [cp, fg, bg] = glyph
         ? [glyph[2].codePointAt(0)!, ZZ_COLOR[glyph[2]]!, DEFAULT_COLOR]
