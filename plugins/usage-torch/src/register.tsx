@@ -6,6 +6,7 @@ import { packCells, poseFor, SCENE_COLUMNS, SCENE_ROWS, sceneCells, WAKE_STEPS, 
 import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lineText, lookFor, nextLine } from './logic.ts'
 import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
+import type { WindowLeft } from './text.ts'
 
 const demo = atom({ plugin: 'usage-torch', key: 'demo' } as const, null)
 const view = atom({ plugin: 'usage-torch', key: 'view' } as const, null)
@@ -28,8 +29,8 @@ const WAKE_STEP_MS = 400
 // Module state: a reload starts it over, the host keeps what the drawing reads in $.state.
 let reduceMotion = false
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
-// The last real reading: the window closest to its limit.
-let real: { percentUsed: number; resetsAt: number | null; kind: string | null } | null = null
+// The last real reading: the window closest to its limit, and what is left of every window.
+let real: { percentUsed: number; resetsAt: number | null; kind: string | null; windows: WindowLeft[] } | null = null
 // Whether a measurement came in: before one, the band shows the torchbearer waiting.
 let measured = false
 let bandId: string | undefined
@@ -50,6 +51,7 @@ const viewFor = (
   percentLeft: number,
   resetsAt: number | null,
   kind: string | null = null,
+  windows: WindowLeft[] | null = null,
 ): TorchView => ({
   look,
   lineIndex: 0,
@@ -57,6 +59,7 @@ const viewFor = (
   percentLeft,
   resetsAt,
   kind,
+  windows,
   isWaking: false,
 })
 
@@ -75,8 +78,8 @@ async function sizeOf($: EngineInterface): Promise<TorchSize> {
 
 function realView(now: number): TorchView | null {
   if (real === null) return null
-  const percentLeft = Math.max(0, Math.round(100 - real.percentUsed))
-  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt, real.kind)
+  const percentLeft = leftOf(real.percentUsed)
+  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt, real.kind, real.windows)
 }
 
 // Before the first measurement the torchbearer waits; after one with no windows (no subscription) it hides.
@@ -84,12 +87,24 @@ function shownView(now: number): TorchView | null {
   return realView(now) ?? (measured ? null : { ...viewFor('awake', now, 100, null), isPending: true })
 }
 
+const leftOf = (percentUsed: number): number => Math.max(0, Math.round(100 - percentUsed))
+
+// The 5-hour window reads first, then the weekly one, then any other in the order reported.
+const WINDOW_ORDER = ['five_hour', 'seven_day']
+const rankOf = (kind: string): number => {
+  const i = WINDOW_ORDER.indexOf(kind)
+  return i === -1 ? WINDOW_ORDER.length : i
+}
+
 // The window that binds first: the most used of those the last response reported.
 function readingOf(limits: readonly SessionRateLimit[]) {
   if (limits.length === 0) return null
   const w = limits.reduce((a, b) => (b.percentUsed > a.percentUsed ? b : a))
   const resetsAt = w.resetsAt === undefined ? null : Date.parse(w.resetsAt)
-  return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt, kind: w.kind }
+  const windows = [...limits]
+    .sort((a, b) => rankOf(a.kind) - rankOf(b.kind))
+    .map(l => ({ kind: l.kind, percentLeft: leftOf(l.percentUsed) }))
+  return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt, kind: w.kind, windows }
 }
 
 async function relight($: EngineInterface, now: number) {
@@ -121,7 +136,14 @@ async function showReal($: EngineInterface) {
   }
   await update($, view, () =>
     next.look === cur.look
-      ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt, kind: next.kind, isPending: next.isPending }
+      ? {
+          ...cur,
+          percentLeft: next.percentLeft,
+          resetsAt: next.resetsAt,
+          kind: next.kind,
+          windows: next.windows,
+          isPending: next.isPending,
+        }
       : next,
   )
 }
@@ -148,7 +170,9 @@ async function step($: EngineInterface) {
     // No turn runs while the limit is hit, so the window's reset is noticed here.
     if (v.look === 'sleep' && !v.isWaking && v.resetsAt !== null && now >= v.resetsAt && real !== null) {
       if ((await read($, demo)) === null) {
-        real = { percentUsed: 0, resetsAt: null, kind: real.kind }
+        const kind = real.kind
+        const windows = real.windows.map(w => (w.kind === kind ? { ...w, percentLeft: 100 } : w))
+        real = { percentUsed: 0, resetsAt: null, kind, windows }
         await showReal($)
       }
     }
@@ -227,7 +251,7 @@ export const register: Register = (on, options) => {
     if (sub === 'status') {
       const v = await read($, view)
       if (v === null || v.isPending === true) return { text: text.NO_READING }
-      return { text: `Usage Torch: ${text.usageLine(v.percentLeft, v.kind, clockOf(v.resetsAt))}` }
+      return { text: `Usage Torch: ${text.usageLine(v.percentLeft, v.kind, clockOf(v.resetsAt), v.windows)}` }
     }
 
     const chosen = DEMOS.find(d => d === arg)
@@ -258,7 +282,7 @@ export const register: Register = (on, options) => {
     isWorking = e.props.isWorking
 
     const clock = clockOf(v.resetsAt)
-    const usage = v.isPending === true ? text.WAITING : text.usageLine(v.percentLeft, v.kind, clock)
+    const usage = v.isPending === true ? text.WAITING : text.usageLine(v.percentLeft, v.kind, clock, v.windows)
 
     if (e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)

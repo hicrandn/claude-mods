@@ -139,6 +139,33 @@ test('the most used window decides, and the threshold makes it tired', async ($,
   await ui.unmount()
 })
 
+test('both windows show side by side, 5-hour first', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [
+    { kind: 'seven_day', percentUsed: 42 },
+    { kind: 'five_hour', percentUsed: 28 },
+  ])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '5h 72% · week 58%' })).toBeDefined()
+  expect((await $.command.run({ command: 'torch', args: 'status' })).text).toBe('Usage Torch: 5h 72% · week 58%')
+  await ui.unmount()
+})
+
+test('compact shows both windows next to the bar of the one that binds', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [
+    { kind: 'five_hour', percentUsed: 10 },
+    { kind: 'seven_day', percentUsed: 60, resetsAt: '2026-10-06T09:00:00Z' },
+  ])
+  await $.command.run({ command: 'torch', args: 'compact' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '▰▰▰▰▱▱▱▱▱▱' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^5h 90% · week 40% · resets \d\d:\d\d$/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a full window puts it to sleep until the reset', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
@@ -206,6 +233,7 @@ test('/torch switches the size and /torch status reports the figures', async ($,
 test('the usage line leaves out a kind an older view does not have', () => {
   expect(usageLine(70, undefined, '')).toBe('70% left')
   expect(usageLine(70, 'seven_day', '15:30')).toBe('70% left · weekly limit · resets 15:30')
+  expect(usageLine(70, 'seven_day', '', null)).toBe('70% left · weekly limit')
 })
 
 test('full is the default: the torchbearer shows with no size picked', async ($, on) => {

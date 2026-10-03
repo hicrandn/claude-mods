@@ -19,11 +19,23 @@ const WINDOW_NAMES: Readonly<Record<string, string>> = {
 }
 export const windowName = (kind: string): string => WINDOW_NAMES[kind] ?? kind.replace(/_/g, ' ')
 
-/** The figures in one line: what is left, of which window, and when it refills. */
-// `kind` may be missing on a view an older version of the mod left in the session's state.
-export function usageLine(percentLeft: number, kind: string | null | undefined, clock: string): string {
-  const parts = [`${percentLeft}% left`]
-  if (typeof kind === 'string') parts.push(windowName(kind))
+const SHORT_NAMES: Readonly<Record<string, string>> = { five_hour: '5h', seven_day: 'week', spend_limit: 'spend' }
+const shortName = (kind: string): string => SHORT_NAMES[kind] ?? kind.replace(/_/g, ' ')
+
+export type WindowLeft = { kind: string; percentLeft: number }
+
+/** The figures in one line: what is left side by side when there are several windows, and when it refills. */
+// `kind` and `windows` may be missing on a view an older version of the mod left in the session's state.
+export function usageLine(
+  percentLeft: number,
+  kind: string | null | undefined,
+  clock: string,
+  windows?: readonly WindowLeft[] | null,
+): string {
+  const parts =
+    windows != null && windows.length > 1
+      ? windows.map(w => `${shortName(w.kind)} ${w.percentLeft}%`)
+      : [`${percentLeft}% left`, ...(typeof kind === 'string' ? [windowName(kind)] : [])]
   if (clock !== '') parts.push(`resets ${clock}`)
   return parts.join(' · ')
 }

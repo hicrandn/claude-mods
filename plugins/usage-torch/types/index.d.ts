@@ -14,6 +14,8 @@ export type TorchView = {
   resetsAt: number | null
   /** The rate-limit window shown (`five_hour`, `seven_day`); null in a demo. */
   kind: string | null
+  /** What is left of every window the last reading reported, 5-hour first; null in a demo. */
+  windows?: { kind: string; percentLeft: number }[] | null
   isWaking: boolean
   /** True while the session has had no reading yet: the torchbearer shows, waiting for figures. */
   isPending?: boolean
