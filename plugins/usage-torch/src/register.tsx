@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
 import type { TorchDemo, TorchLook, TorchSize, TorchView } from '../types'
-import { packCells, poseFor, sceneCells, sceneColumns, sceneRows, WAKE_STEPS, wakePose } from './frames.ts'
+import { packCells, poseFor, SCENE_COLUMNS, SCENE_ROWS, sceneCells, WAKE_STEPS, wakePose } from './frames.ts'
 import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lineText, lookFor, nextLine } from './logic.ts'
 import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
@@ -13,8 +13,8 @@ const countdown = atom({ plugin: 'usage-torch', key: 'countdown' } as const, '')
 
 const RASTER = 'torch'
 const SIZE_KEY = 'size'
-const SIZES: readonly TorchSize[] = ['compact', 'small', 'full']
-const DEFAULT_SIZE: TorchSize = 'small'
+const SIZES: readonly TorchSize[] = ['compact', 'full']
+const DEFAULT_SIZE: TorchSize = 'compact'
 const BAR_CELLS = 10
 // The bar takes the flame's color for the state: bright, low, out.
 const BAR_COLORS: Record<TorchLook, string> = { awake: '#EF9F27', tired: '#D85A30', sleep: '#888780' }
@@ -113,7 +113,7 @@ async function showReal($: EngineInterface) {
     return
   }
   await update($, view, () =>
-    next.look === cur.look ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt } : next,
+    next.look === cur.look ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt, kind: next.kind } : next,
   )
 }
 
@@ -151,7 +151,7 @@ async function step($: EngineInterface) {
 
     const isMoving = v.isWaking || !reduceMotion
     if (bandId !== undefined && isMoving && drawnSize !== 'compact') {
-      const cells = packCells(sceneCells(poseOf(v), drawnSize))
+      const cells = packCells(sceneCells(poseOf(v)))
       $.ui.blit({ requestId: bandId, key: RASTER, cells }).catch(() => undefined)
     }
   }
@@ -208,7 +208,7 @@ export const register: Register = (on, options) => {
       return { text: text.SIZE_SET(named) }
     }
 
-    // A bare /torch steps through the sizes: compact, small, full, and round again.
+    // A bare /torch switches between the sizes.
     if (sub === undefined || sub === '') {
       const size = SIZES[(SIZES.indexOf(await sizeOf($)) + 1) % SIZES.length]!
       await $.store.set(SIZE_KEY, size)
@@ -279,13 +279,11 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const columns = sceneColumns(size)
-    const isSmall = size === 'small'
     return (
       <Box flexDirection="row">
-        <Box flexDirection="column" width={columns} flexShrink={0}>
-          <Raster key={RASTER} columns={columns} rows={sceneRows(size)} cells={packCells(sceneCells(poseOf(v), size))} />
-          {isResting && !isSmall && (
+        <Box flexDirection="column" width={SCENE_COLUMNS} flexShrink={0}>
+          <Raster key={RASTER} columns={SCENE_COLUMNS} rows={SCENE_ROWS} cells={packCells(sceneCells(poseOf(v)))} />
+          {isResting && (
             <Box flexDirection="row" gap={1}>
               <Text bold>{left}</Text>
               <Text dimColor>{text.relightsAt(clock)}</Text>
@@ -293,7 +291,7 @@ export const register: Register = (on, options) => {
           )}
         </Box>
         {!v.isWaking && (
-          <Box flexDirection="column" marginTop={isSmall ? 1 : 3} marginLeft={1} flexShrink={1}>
+          <Box flexDirection="column" marginTop={3} marginLeft={1} flexShrink={1}>
             <Box borderStyle="round" borderDimColor paddingX={1}>
               <Text wrap="truncate-end" dimColor={v.look === 'sleep'}>
                 {lineText({ look: v.look, index: v.lineIndex, at: v.lineAt })}
@@ -304,12 +302,6 @@ export const register: Register = (on, options) => {
                 <Text wrap="truncate-end" dimColor>
                   {usage}
                 </Text>
-              </Box>
-            )}
-            {isResting && isSmall && (
-              <Box flexDirection="row" gap={1} paddingX={1}>
-                <Text bold>{left}</Text>
-                <Text dimColor>{text.relightsAt(clock)}</Text>
               </Box>
             )}
           </Box>

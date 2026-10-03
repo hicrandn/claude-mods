@@ -20,9 +20,10 @@ const WINDOW_NAMES: Readonly<Record<string, string>> = {
 export const windowName = (kind: string): string => WINDOW_NAMES[kind] ?? kind.replace(/_/g, ' ')
 
 /** The figures in one line: what is left, of which window, and when it refills. */
-export function usageLine(percentLeft: number, kind: string | null, clock: string): string {
+// `kind` may be missing on a view an older version of the mod left in the session's state.
+export function usageLine(percentLeft: number, kind: string | null | undefined, clock: string): string {
   const parts = [`${percentLeft}% left`]
-  if (kind !== null) parts.push(windowName(kind))
+  if (typeof kind === 'string') parts.push(windowName(kind))
   if (clock !== '') parts.push(`resets ${clock}`)
   return parts.join(' · ')
 }
@@ -31,10 +32,10 @@ export const COMPACT_LABEL = 'Torch'
 export const OUT_OF_LIGHT = 'out of light'
 
 export const COMMAND_DESCRIPTION = 'Switch the Usage Torch band between compact and full, show usage, or simulate a state'
-export const COMMAND_HINT = '[compact|small|full|status|demo awake|tired|sleep|wake|off]'
+export const COMMAND_HINT = '[compact|full|status|demo awake|tired|sleep|wake|off]'
 export const DEMO_ON = (look: string): string => `Usage Torch demo: ${look}. Real usage is ignored until /torch demo off.`
 export const DEMO_OFF = 'Usage Torch demo off.'
 export const USAGE =
-  'Usage: /torch, /torch compact, /torch small, /torch full, /torch status, /torch demo awake|tired|sleep|wake, /torch demo off'
+  'Usage: /torch, /torch compact, /torch full, /torch status, /torch demo awake|tired|sleep|wake, /torch demo off'
 export const SIZE_SET = (size: string): string => `Usage Torch band: ${size}.`
 export const NO_READING = 'Usage Torch has no usage reading yet. It arrives with the first reply.'

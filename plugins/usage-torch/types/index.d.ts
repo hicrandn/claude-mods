@@ -2,8 +2,8 @@ export type TorchLook = 'awake' | 'tired' | 'sleep'
 
 export type TorchDemo = TorchLook | 'wake'
 
-/** How much room the band takes: one line, the half-size torchbearer, or the full one. */
-export type TorchSize = 'compact' | 'small' | 'full'
+/** How much room the band takes: one line, or the torchbearer. */
+export type TorchSize = 'compact' | 'full'
 
 /** What the band shows: the state, its speech line, and the window it reads. */
 export type TorchView = {

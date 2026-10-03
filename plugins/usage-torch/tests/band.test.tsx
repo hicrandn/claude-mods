@@ -1,3 +1,4 @@
+import { usageLine } from '../src/text.ts'
 import { expect, mock, test } from 'claude-code/testing'
 
 const BAND = {
@@ -161,11 +162,10 @@ test('demo off goes back to the real reading', async ($, on) => {
   await ui.unmount()
 })
 
-test('compact is one line with the bar, what is left and when it resets', async ($, on) => {
+test('compact is the default: one line with the bar, what is left and when it resets', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 38, resetsAt: '2026-10-03T15:30:00Z' }])
-  await $.command.run({ command: 'torch', args: 'compact' })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '▰▰▰▰▰▰▱▱▱▱' })).toBeDefined()
@@ -194,35 +194,16 @@ test('full shows the usage line under the speech bubble', async ($, on) => {
   await ui.unmount()
 })
 
-test('/torch steps through the sizes and /torch status reports the figures', async ($, on) => {
+test('/torch switches the size and /torch status reports the figures', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 25 }])
   expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: full.')
   expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: compact.')
-  expect((await $.command.run({ command: 'torch', args: '' })).text).toBe('Usage Torch band: small.')
   expect((await $.command.run({ command: 'torch', args: 'status' })).text).toBe('Usage Torch: 75% left · 5-hour limit')
 })
 
-test('small is the default: the half-size torchbearer with the usage line', async ($, on) => {
-  mock.store(on)
-  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
-  await startWith($, on, [{ kind: 'five_hour', percentUsed: 38 }])
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const raster = await ui.find({ type: 'Raster', key: 'torch' })
-  expect(raster?.props.columns).toBe(14)
-  expect(raster?.props.rows).toBe(7)
-  expect(await ui.find({ type: 'Text', text: "Let's go!" })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '62% left · 5-hour limit' })).toBeDefined()
-  await ui.unmount()
-})
-
-test('small and asleep shows the countdown beside the torchbearer', async ($, on) => {
-  mock.store(on)
-  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
-  await startWith($, on, [{ kind: 'five_hour', percentUsed: 100, resetsAt: '2026-10-03T13:00:00Z' }])
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: '1:00' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Relights at \d\d:\d\d$/ })).toBeDefined()
-  await ui.unmount()
+test('the usage line leaves out a kind an older view does not have', () => {
+  expect(usageLine(70, undefined, '')).toBe('70% left')
+  expect(usageLine(70, 'seven_day', '15:30')).toBe('70% left · weekly limit · resets 15:30')
 })
