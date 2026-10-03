@@ -1,7 +1,7 @@
 {
   "name": "usage-torch",
   "displayName": "Usage Torch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Your Claude usage limit, as a tiny torchbearer whose flame fades as you use it.",
   "author": {
     "name": "hicrandn"

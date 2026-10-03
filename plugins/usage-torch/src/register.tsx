@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
 import type { TorchDemo, TorchLook, TorchView } from '../types'
 import { packCells, poseFor, SCENE_COLUMNS, SCENE_ROWS, sceneCells, WAKE_STEPS, wakePose } from './frames.ts'
-import { formatClock, formatCountdown, lineText, nextLine } from './logic.ts'
+import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lineText, lookFor, nextLine } from './logic.ts'
+import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
 
 const demo = atom({ plugin: 'usage-torch', key: 'demo' } as const, null)
@@ -20,6 +21,9 @@ const WAKE_STEP_MS = 400
 
 // Module state: a reload starts it over, the host keeps what the drawing reads in $.state.
 let reduceMotion = false
+let thresholds: Thresholds = DEFAULT_THRESHOLDS
+// The last real reading: the window closest to its limit.
+let real: { percentUsed: number; resetsAt: number | null } | null = null
 let bandId: string | undefined
 let isWorking = false
 let tick = 0
@@ -40,10 +44,50 @@ const viewFor = (look: TorchLook, now: number, percentLeft: number, resetsAt: nu
   isWaking: false,
 })
 
+function realView(now: number): TorchView | null {
+  if (real === null) return null
+  const percentLeft = Math.max(0, Math.round(100 - real.percentUsed))
+  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt)
+}
+
+// The window that binds first: the most used of those the last response reported.
+function readingOf(limits: readonly SessionRateLimit[]) {
+  if (limits.length === 0) return null
+  const w = limits.reduce((a, b) => (b.percentUsed > a.percentUsed ? b : a))
+  const resetsAt = w.resetsAt === undefined ? null : Date.parse(w.resetsAt)
+  return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt }
+}
+
 async function relight($: EngineInterface, now: number) {
   wakeStep = 0
-  await update($, view, () => viewFor('awake', now, 100, null))
+  const isDemo = (await read($, demo)) !== null
+  await update($, view, () => (isDemo ? viewFor('awake', now, 100, null) : realView(now)))
   $.ui.toast(text.WAKE_TOAST)
+}
+
+// Draws the real reading unless a demo holds the band; leaving sleep plays the wake-up.
+async function showReal($: EngineInterface) {
+  if ((await read($, demo)) !== null) return
+  const now = await $.clock.now()
+  const next = realView(now)
+  const cur = await read($, view)
+  if (next?.look === 'sleep' && next.resetsAt !== null) {
+    const left = formatCountdown(next.resetsAt - now)
+    await update($, countdown, () => left)
+  }
+  if (next === null || cur === null || cur.isWaking) {
+    if (cur?.isWaking !== true) await update($, view, () => next)
+    return
+  }
+  if (cur.look === 'sleep' && next.look !== 'sleep') {
+    if (reduceMotion) return relight($, now)
+    wakeStep = 0
+    await update($, view, () => ({ ...cur, isWaking: true }))
+    return
+  }
+  await update($, view, () =>
+    next.look === cur.look ? { ...cur, percentLeft: next.percentLeft, resetsAt: next.resetsAt } : next,
+  )
 }
 
 // One animation step, then the next one scheduled at the pace the state asks for.
@@ -65,6 +109,14 @@ async function step($: EngineInterface) {
       }
     }
 
+    // No turn runs while the limit is hit, so the window's reset is noticed here.
+    if (v.look === 'sleep' && !v.isWaking && v.resetsAt !== null && now >= v.resetsAt && real !== null) {
+      if ((await read($, demo)) === null) {
+        real = { percentUsed: 0, resetsAt: null }
+        await showReal($)
+      }
+    }
+
     if (v.look === 'sleep' && v.resetsAt !== null) {
       const left = formatCountdown(v.resetsAt - now)
       if (left !== (await read($, countdown))) await update($, countdown, () => left)
@@ -81,6 +133,11 @@ async function step($: EngineInterface) {
 
 export const register: Register = (on, options) => {
   reduceMotion = options.reduceMotion === true
+  const { tiredBelowPercent, sleepAtPercentUsed } = options
+  thresholds = {
+    tiredBelowPercent: typeof tiredBelowPercent === 'number' ? tiredBelowPercent : DEFAULT_THRESHOLDS.tiredBelowPercent,
+    sleepAtPercentUsed: typeof sleepAtPercentUsed === 'number' ? sleepAtPercentUsed : DEFAULT_THRESHOLDS.sleepAtPercentUsed,
+  }
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -93,6 +150,17 @@ export const register: Register = (on, options) => {
     timer?.cancel()
     void step($)
 
+    const result = await next(e)
+    real = readingOf((await $.session.usage()).rateLimits)
+    await showReal($)
+    return result
+  })
+
+  on('session.measure', async ($, e, next) => {
+    if (e.changed.includes('rateLimits')) {
+      real = readingOf(e.rateLimits)
+      await showReal($)
+    }
     return next(e)
   })
 
@@ -102,6 +170,7 @@ export const register: Register = (on, options) => {
     if (sub === 'demo' && arg === 'off') {
       await update($, demo, () => null)
       await update($, view, () => null)
+      await showReal($)
       return { text: text.DEMO_OFF }
     }
 
