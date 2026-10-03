@@ -1,0 +1,15 @@
+{
+  "name": "hicran-mods",
+  "owner": { "name": "hicrandn" },
+  "metadata": {
+    "description": "Small mods for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "usage-torch",
+      "source": "./plugins/usage-torch",
+      "description": "Your Claude usage limit, as a tiny torchbearer whose flame fades as you use it.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "usage-torch",
+  "displayName": "Usage Torch",
+  "version": "0.1.0",
+  "description": "Your Claude usage limit, as a tiny torchbearer whose flame fades as you use it.",
+  "author": { "name": "hicrandn" },
+  "license": "MIT",
+  "repository": "https://github.com/hicrandn/claude-mods",
+  "userConfig": {
+    "tiredBelowPercent": {
+      "type": "number",
+      "title": "Tired below (% left)",
+      "description": "The torchbearer gets tired when less than this share of the limit is left.",
+      "default": 30,
+      "min": 1,
+      "max": 99
+    },
+    "sleepAtPercentUsed": {
+      "type": "number",
+      "title": "Sleep at (% used)",
+      "description": "The flame goes out once this share of the limit is used.",
+      "default": 100,
+      "min": 50,
+      "max": 100
+    },
+    "reduceMotion": {
+      "type": "boolean",
+      "title": "Reduce motion",
+      "description": "Draw still frames: no flicker, no bounce.",
+      "default": false
+    }
+  }
+}
