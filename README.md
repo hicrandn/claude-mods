@@ -17,7 +17,6 @@ claude plugin install usage-torch@hicran-mods
 ```
 
 ## Try it
- Install it (see below) and start a new Claude Code session.
 The torchbearer shows up right away. Send any message: after the first reply, the waiting line turns into your real usage.
 
 Mods need Claude Code 2.1.287 or newer.
