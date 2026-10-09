@@ -2,9 +2,6 @@
 
 A Claude Code plugin marketplace of small mods.
 
-<img width="500" height="200" alt="image" src="https://github.com/user-attachments/assets/f37fa3ec-fa05-4505-afab-b320a0d9da51" />
-
-
 | Mod | What it does |
 | --- | --- |
 | [usage-torch](plugins/usage-torch) | Your Claude usage limit, as a one-line torch bar that fades as you use it. The band sits above the prompt. It reads your rate-limit windows after every reply and shows what is left of the 5-hour and the weekly window side by side (5h 72% · week 58%). The bar follows the one closest to its limit. |
