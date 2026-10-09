@@ -1,9 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
-import type { TorchDemo, TorchLook, TorchSize, TorchView } from '../types'
-import { packCells, poseFor, SCENE_COLUMNS, SCENE_ROWS, sceneCells, WAKE_STEPS, wakePose } from './frames.ts'
-import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lineText, lookFor, nextLine } from './logic.ts'
+import type { TorchDemo, TorchLook, TorchView } from '../types'
+import { DEFAULT_THRESHOLDS, formatClock, formatCountdown, lookFor } from './logic.ts'
 import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
 import type { WindowLeft } from './text.ts'
@@ -12,56 +11,29 @@ const demo = atom({ plugin: 'usage-torch', key: 'demo' } as const, null)
 const view = atom({ plugin: 'usage-torch', key: 'view' } as const, null)
 const countdown = atom({ plugin: 'usage-torch', key: 'countdown' } as const, '')
 
-const RASTER = 'torch'
-const SIZE_KEY = 'size'
-const SIZES: readonly TorchSize[] = ['compact', 'full']
-const DEFAULT_SIZE: TorchSize = 'full'
 const BAR_CELLS = 10
 // The bar takes the flame's color for the state: bright, low, out.
 const BAR_COLORS: Record<TorchLook, string> = { awake: '#EF9F27', tired: '#D85A30', sleep: '#888780' }
-const DEMOS: readonly TorchDemo[] = ['awake', 'tired', 'sleep', 'wake']
+const DEMOS: readonly TorchDemo[] = ['awake', 'tired', 'sleep']
 const DEMO_PERCENT_LEFT: Record<TorchLook, number> = { awake: 82, tired: 18, sleep: 0 }
 const DEMO_RESET_MS = 12 * 60_000 + 30_000
-// The wake-up holds the sleeping pose this many steps before the eyes open.
-const WAKE_LEAD = 4
-const WAKE_STEP_MS = 400
+const TICK_MS = 1000
 
 // Module state: a reload starts it over, the host keeps what the drawing reads in $.state.
-let reduceMotion = false
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
 // The last real reading: the window closest to its limit, and what is left of every window.
 let real: { percentUsed: number; resetsAt: number | null; kind: string | null; windows: WindowLeft[] } | null = null
-// Whether a measurement came in: before one, the band shows the torchbearer waiting.
+// Whether a measurement came in: before one, the band shows a waiting line.
 let measured = false
-let bandId: string | undefined
-let drawnSize: TorchSize = DEFAULT_SIZE
-let isWorking = false
-let tick = 0
-let wakeStep = 0
 let timer: Timer | undefined
-
-function poseOf(v: TorchView) {
-  if (!v.isWaking) return poseFor(v.look, reduceMotion ? 0 : tick)
-  return wakeStep < WAKE_LEAD ? poseFor('sleep', tick) : wakePose(wakeStep - WAKE_LEAD)
-}
 
 const viewFor = (
   look: TorchLook,
-  now: number,
   percentLeft: number,
   resetsAt: number | null,
   kind: string | null = null,
   windows: WindowLeft[] | null = null,
-): TorchView => ({
-  look,
-  lineIndex: 0,
-  lineAt: now,
-  percentLeft,
-  resetsAt,
-  kind,
-  windows,
-  isWaking: false,
-})
+): TorchView => ({ look, percentLeft, resetsAt, kind, windows })
 
 const clockOf = (resetsAt: number | null): string =>
   resetsAt === null ? '' : formatClock(resetsAt, -new Date(resetsAt).getTimezoneOffset())
@@ -71,20 +43,15 @@ const barOf = (percentLeft: number): string => {
   return '▰'.repeat(lit) + '▱'.repeat(BAR_CELLS - lit)
 }
 
-async function sizeOf($: EngineInterface): Promise<TorchSize> {
-  const stored = await $.store.get(SIZE_KEY)
-  return SIZES.find(s => s === stored) ?? DEFAULT_SIZE
-}
-
-function realView(now: number): TorchView | null {
+function realView(): TorchView | null {
   if (real === null) return null
   const percentLeft = leftOf(real.percentUsed)
-  return viewFor(lookFor(real.percentUsed, thresholds), now, percentLeft, real.resetsAt, real.kind, real.windows)
+  return viewFor(lookFor(real.percentUsed, thresholds), percentLeft, real.resetsAt, real.kind, real.windows)
 }
 
-// Before the first measurement the torchbearer waits; after one with no windows (no subscription) it hides.
-function shownView(now: number): TorchView | null {
-  return realView(now) ?? (measured ? null : { ...viewFor('awake', now, 100, null), isPending: true })
+// Before the first measurement the band waits; after one with no windows (no subscription) it hides.
+function shownView(): TorchView | null {
+  return realView() ?? (measured ? null : { ...viewFor('awake', 100, null), isPending: true })
 }
 
 const leftOf = (percentUsed: number): number => Math.max(0, Math.round(100 - percentUsed))
@@ -107,93 +74,41 @@ function readingOf(limits: readonly SessionRateLimit[]) {
   return { percentUsed: w.percentUsed, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt, kind: w.kind, windows }
 }
 
-async function relight($: EngineInterface, now: number) {
-  wakeStep = 0
-  const isDemo = (await read($, demo)) !== null
-  await update($, view, () => (isDemo ? viewFor('awake', now, 100, null) : shownView(now)))
-  $.ui.toast(text.WAKE_TOAST)
-}
-
-// Draws the real reading unless a demo holds the band; leaving sleep plays the wake-up.
+// Draws the real reading unless a demo holds the band; leaving sleep says the torch relit.
 async function showReal($: EngineInterface) {
   if ((await read($, demo)) !== null) return
   const now = await $.clock.now()
-  const next = shownView(now)
+  const next = shownView()
   const cur = await read($, view)
   if (next?.look === 'sleep' && next.resetsAt !== null) {
     const left = formatCountdown(next.resetsAt - now)
     await update($, countdown, () => left)
   }
-  if (next === null || cur === null || cur.isWaking) {
-    if (cur?.isWaking !== true) await update($, view, () => next)
-    return
-  }
-  if (cur.look === 'sleep' && next.look !== 'sleep') {
-    if (reduceMotion) return relight($, now)
-    wakeStep = 0
-    await update($, view, () => ({ ...cur, isWaking: true }))
-    return
-  }
-  await update($, view, () =>
-    next.look === cur.look
-      ? {
-          ...cur,
-          percentLeft: next.percentLeft,
-          resetsAt: next.resetsAt,
-          kind: next.kind,
-          windows: next.windows,
-          isPending: next.isPending,
-        }
-      : next,
-  )
+  await update($, view, () => next)
+  if (cur?.look === 'sleep' && next !== null && next.look !== 'sleep') $.ui.toast(text.WAKE_TOAST)
 }
 
-// One animation step, then the next one scheduled at the pace the state asks for.
+// Once a second while asleep: the countdown ticks, and the window's reset is noticed here,
+// since no turn runs while the limit is hit.
 async function step($: EngineInterface) {
   const v = await read($, view)
-  const now = await $.clock.now()
-  let delay = isWorking ? 500 : 1000
-
-  if (v !== null) {
-    tick += 1
-    if (v.isWaking) {
-      delay = WAKE_STEP_MS
-      wakeStep += 1
-      if (wakeStep >= WAKE_LEAD + WAKE_STEPS) await relight($, now)
+  if (v !== null && v.look === 'sleep' && v.resetsAt !== null) {
+    const now = await $.clock.now()
+    if (now >= v.resetsAt && real !== null && (await read($, demo)) === null) {
+      const kind = real.kind
+      const windows = real.windows.map(w => (w.kind === kind ? { ...w, percentLeft: 100 } : w))
+      real = { percentUsed: 0, resetsAt: null, kind, windows }
+      await showReal($)
     } else {
-      const line = nextLine(v.look, { look: v.look, index: v.lineIndex, at: v.lineAt }, now)
-      if (line.index !== v.lineIndex || line.at !== v.lineAt) {
-        await update($, view, cur => (cur === null ? cur : { ...cur, lineIndex: line.index, lineAt: line.at }))
-      }
-    }
-
-    // No turn runs while the limit is hit, so the window's reset is noticed here.
-    if (v.look === 'sleep' && !v.isWaking && v.resetsAt !== null && now >= v.resetsAt && real !== null) {
-      if ((await read($, demo)) === null) {
-        const kind = real.kind
-        const windows = real.windows.map(w => (w.kind === kind ? { ...w, percentLeft: 100 } : w))
-        real = { percentUsed: 0, resetsAt: null, kind, windows }
-        await showReal($)
-      }
-    }
-
-    if (v.look === 'sleep' && v.resetsAt !== null) {
       const left = formatCountdown(v.resetsAt - now)
       if (left !== (await read($, countdown))) await update($, countdown, () => left)
     }
-
-    const isMoving = v.isWaking || !reduceMotion
-    if (bandId !== undefined && isMoving && drawnSize !== 'compact') {
-      const cells = packCells(sceneCells(poseOf(v)))
-      $.ui.blit({ requestId: bandId, key: RASTER, cells }).catch(() => undefined)
-    }
   }
 
-  timer = $.clock.after(delay, () => void step($))
+  timer = $.clock.after(TICK_MS, () => void step($))
 }
 
 export const register: Register = (on, options) => {
-  reduceMotion = options.reduceMotion === true
   const { tiredBelowPercent, sleepAtPercentUsed } = options
   thresholds = {
     tiredBelowPercent: typeof tiredBelowPercent === 'number' ? tiredBelowPercent : DEFAULT_THRESHOLDS.tiredBelowPercent,
@@ -206,8 +121,6 @@ export const register: Register = (on, options) => {
       description: text.COMMAND_DESCRIPTION,
       argumentHint: text.COMMAND_HINT,
     })
-    const settings = await $.settings.read()
-    reduceMotion = reduceMotion || settings.prefersReducedMotion === true
     timer?.cancel()
     void step($)
 
@@ -235,20 +148,8 @@ export const register: Register = (on, options) => {
       return { text: text.DEMO_OFF }
     }
 
-    const named = SIZES.find(s => s === sub)
-    if (named !== undefined) {
-      await $.store.set(SIZE_KEY, named)
-      return { text: text.SIZE_SET(named) }
-    }
-
-    // A bare /torch switches between the sizes.
-    if (sub === undefined || sub === '') {
-      const size = SIZES[(SIZES.indexOf(await sizeOf($)) + 1) % SIZES.length]!
-      await $.store.set(SIZE_KEY, size)
-      return { text: text.SIZE_SET(size) }
-    }
-
-    if (sub === 'status') {
+    // A bare /torch reports the figures, like /torch status.
+    if (sub === undefined || sub === '' || sub === 'status') {
       const v = await read($, view)
       if (v === null || v.isPending === true) return { text: text.NO_READING }
       return { text: `Usage Torch: ${text.usageLine(v.percentLeft, v.kind, clockOf(v.resetsAt), v.windows)}` }
@@ -257,16 +158,10 @@ export const register: Register = (on, options) => {
     const chosen = DEMOS.find(d => d === arg)
     if (sub === 'demo' && chosen !== undefined) {
       const now = await $.clock.now()
-      const look: TorchLook = chosen === 'wake' ? 'sleep' : chosen
-      const resetsAt = look === 'sleep' ? now + DEMO_RESET_MS : null
+      const resetsAt = chosen === 'sleep' ? now + DEMO_RESET_MS : null
       await update($, demo, () => chosen)
       await update($, countdown, () => (resetsAt === null ? '' : formatCountdown(resetsAt - now)))
-      if (chosen === 'wake' && reduceMotion) {
-        await relight($, now)
-      } else {
-        wakeStep = 0
-        await update($, view, () => ({ ...viewFor(look, now, DEMO_PERCENT_LEFT[look], resetsAt), isWaking: chosen === 'wake' }))
-      }
+      await update($, view, () => viewFor(chosen, DEMO_PERCENT_LEFT[chosen], resetsAt))
       return { text: text.DEMO_ON(chosen) }
     }
 
@@ -278,9 +173,6 @@ export const register: Register = (on, options) => {
     const v = await read($, view)
     if (v === null) return next(e)
 
-    bandId = e.requestId
-    isWorking = e.props.isWorking
-
     const clock = clockOf(v.resetsAt)
     const usage = v.isPending === true ? text.WAITING : text.usageLine(v.percentLeft, v.kind, clock, v.windows)
 
@@ -290,56 +182,22 @@ export const register: Register = (on, options) => {
       return <Text dimColor>{`${head} · ${usage}`}</Text>
     }
 
-    const { Box, Raster, Text } = $.ui.resolve(e)
-    const isResting = v.look === 'sleep' && !v.isWaking && v.resetsAt !== null
+    const { Box, Text } = $.ui.resolve(e)
+    const isOut = v.look === 'sleep'
+    const isResting = isOut && v.resetsAt !== null
     const left = isResting ? await read($, countdown) : ''
-    const size = await sizeOf($)
-    drawnSize = size
-
-    if (size === 'compact') {
-      const isOut = v.look === 'sleep' && !v.isWaking
-      return (
-        <Box flexDirection="row" gap={1}>
-          <Text color={BAR_COLORS[v.look]} bold>
-            {text.COMPACT_LABEL}
-          </Text>
-          {v.isPending !== true && <Text color={BAR_COLORS[v.look]}>{barOf(v.percentLeft)}</Text>}
-          <Text wrap="truncate-end" dimColor>
-            {isOut
-              ? [text.OUT_OF_LIGHT, isResting ? `${left} · ${text.relightsAt(clock)}` : ''].filter(Boolean).join(' · ')
-              : usage}
-          </Text>
-        </Box>
-      )
-    }
 
     return (
-      <Box flexDirection="row">
-        <Box flexDirection="column" width={SCENE_COLUMNS} flexShrink={0}>
-          <Raster key={RASTER} columns={SCENE_COLUMNS} rows={SCENE_ROWS} cells={packCells(sceneCells(poseOf(v)))} />
-          {isResting && (
-            <Box flexDirection="row" gap={1}>
-              <Text bold>{left}</Text>
-              <Text dimColor>{text.relightsAt(clock)}</Text>
-            </Box>
-          )}
-        </Box>
-        {!v.isWaking && (
-          <Box flexDirection="column" marginTop={3} marginLeft={1} flexShrink={1}>
-            <Box borderStyle="round" borderDimColor paddingX={1}>
-              <Text wrap="truncate-end" dimColor={v.look === 'sleep'}>
-                {lineText({ look: v.look, index: v.lineIndex, at: v.lineAt })}
-              </Text>
-            </Box>
-            {!isResting && (
-              <Box paddingX={1}>
-                <Text wrap="truncate-end" dimColor>
-                  {usage}
-                </Text>
-              </Box>
-            )}
-          </Box>
-        )}
+      <Box flexDirection="row" gap={1}>
+        <Text color={BAR_COLORS[v.look]} bold>
+          {text.LABEL}
+        </Text>
+        {v.isPending !== true && <Text color={BAR_COLORS[v.look]}>{barOf(v.percentLeft)}</Text>}
+        <Text wrap="truncate-end" dimColor>
+          {isOut
+            ? [text.OUT_OF_LIGHT, isResting ? `${left} · ${text.relightsAt(clock)}` : ''].filter(Boolean).join(' · ')
+            : usage}
+        </Text>
       </Box>
     )
   })
