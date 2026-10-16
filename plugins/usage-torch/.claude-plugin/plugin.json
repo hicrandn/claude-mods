@@ -1,7 +1,7 @@
 {
   "name": "usage-torch",
   "displayName": "Usage Torch",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Your Claude usage limit, as a one-line torch bar above the prompt that fades as you use it.",
   "author": {
     "name": "hicrandn"

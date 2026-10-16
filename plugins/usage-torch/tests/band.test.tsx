@@ -22,6 +22,13 @@ const engineBand = (on: Parameters<Parameters<typeof test>[1]>[1]) =>
     return <Text>engine</Text>
   })
 
+// Stands for the engine's own band when nothing else draws there: empty.
+const emptyEngine = (on: Parameters<Parameters<typeof test>[1]>[1]) =>
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
 test('the band stays out of the way until something is shown', async ($, on) => {
   engineBand(on)
   mock.store(on)
@@ -33,6 +40,7 @@ test('the band stays out of the way until something is shown', async ($, on) => 
 })
 
 test('demo sleep shows the countdown and when the torch relights', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await $.command.run({ command: 'torch', args: 'demo sleep' })
@@ -42,6 +50,7 @@ test('demo sleep shows the countdown and when the torch relights', async ($, on)
 })
 
 test('desktop gets one line of text', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await $.command.run({ command: 'torch', args: 'demo tired' })
@@ -51,6 +60,7 @@ test('desktop gets one line of text', async ($, on) => {
 })
 
 test('demo off before any reading goes back to the waiting line', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await $.command.run({ command: 'torch', args: 'demo awake' })
@@ -75,6 +85,7 @@ const startWith = async (
 }
 
 test('real usage shows without a demo', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 12 }])
@@ -84,6 +95,7 @@ test('real usage shows without a demo', async ($, on) => {
 })
 
 test('the most used window decides, and the threshold makes it tired', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [
@@ -97,6 +109,7 @@ test('the most used window decides, and the threshold makes it tired', async ($,
 })
 
 test('both windows show side by side, 5-hour first', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [
@@ -110,6 +123,7 @@ test('both windows show side by side, 5-hour first', async ($, on) => {
 })
 
 test('the band shows both windows next to the bar of the one that binds', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [
@@ -123,6 +137,7 @@ test('the band shows both windows next to the bar of the one that binds', async 
 })
 
 test('a full window puts it to sleep until the reset', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 100, resetsAt: '2026-10-03T13:00:00Z' }])
@@ -133,6 +148,7 @@ test('a full window puts it to sleep until the reset', async ($, on) => {
 })
 
 test('demo off goes back to the real reading', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 40 }])
@@ -144,6 +160,7 @@ test('demo off goes back to the real reading', async ($, on) => {
 })
 
 test('the band is one line with the bar, what is left and when it resets', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 38, resetsAt: '2026-10-03T15:30:00Z' }])
@@ -154,6 +171,7 @@ test('the band is one line with the bar, what is left and when it resets', async
 })
 
 test('asleep, the band shows the countdown to the relight', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 100, resetsAt: '2026-10-03T13:00:00Z' }])
@@ -169,6 +187,7 @@ test('the usage line leaves out a kind an older view does not have', () => {
 })
 
 test('right after install the band shows, waiting for the first reply', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [])
@@ -180,6 +199,7 @@ test('right after install the band shows, waiting for the first reply', async ($
 })
 
 test('the first reading replaces the waiting line', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [])
@@ -188,6 +208,19 @@ test('the first reading replaces the waiting line', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: '62% left · 5-hour limit' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Usage shows after the first reply' })).toBeUndefined()
   await ui.unmount()
+})
+
+test('the band beneath stays drawn beside the torch', async ($, on) => {
+  engineBand(on)
+  mock.store(on)
+  mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
+  await startWith($, on, [{ kind: 'five_hour', percentUsed: 38 }])
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ type: 'Text', text: /62% left/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+    await ui.unmount()
+  }
 })
 
 test('a reply with no windows (no subscription) hides the band', async ($, on) => {
@@ -203,6 +236,7 @@ test('a reply with no windows (no subscription) hides the band', async ($, on) =
 })
 
 test('while waiting the band shows no bar', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [])
@@ -213,6 +247,7 @@ test('while waiting the band shows no bar', async ($, on) => {
 })
 
 test('the band never draws a picture', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 12 }])
@@ -222,6 +257,7 @@ test('the band never draws a picture', async ($, on) => {
 })
 
 test('/torch reports the figures', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   await startWith($, on, [{ kind: 'five_hour', percentUsed: 25 }])
@@ -230,6 +266,7 @@ test('/torch reports the figures', async ($, on) => {
 })
 
 test('leaving sleep says the torch relit', async ($, on) => {
+  emptyEngine(on)
   mock.store(on)
   mock.clock(on, { now: Date.UTC(2026, 9, 3, 12, 0) })
   const toasts: string[] = []

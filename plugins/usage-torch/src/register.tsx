@@ -18,6 +18,8 @@ const DEMOS: readonly TorchDemo[] = ['awake', 'tired', 'sleep']
 const DEMO_PERCENT_LEFT: Record<TorchLook, number> = { awake: 82, tired: 18, sleep: 0 }
 const DEMO_RESET_MS = 12 * 60_000 + 30_000
 const TICK_MS = 1000
+// From this width the torch sits beside the band beneath it; narrower, that band goes on a line of its own.
+const SIDE_BY_SIDE_COLUMNS = 110
 
 // Module state: a reload starts it over, the host keeps what the drawing reads in $.state.
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
@@ -168,18 +170,26 @@ export const register: Register = (on, options) => {
     return { text: text.USAGE }
   })
 
+  // The torch draws its line and keeps what the plugins beneath draw beside it, so it shares the
+  // spot above the prompt (with context-band, say) instead of taking it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const v = await read($, view)
     if (v === null) return next(e)
+    const below = await next(e)
 
     const clock = clockOf(v.resetsAt)
     const usage = v.isPending === true ? text.WAITING : text.usageLine(v.percentLeft, v.kind, clock, v.windows)
 
     if (e.surface !== 'terminal') {
-      const { Text } = $.ui.resolve(e)
+      const { Box, Text } = $.ui.resolve(e)
       const head = v.isPending === true ? 'Usage Torch' : text.oneLine(v.percentLeft)
-      return <Text dimColor>{`${head} · ${usage}`}</Text>
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>{`${head} · ${usage}`}</Text>
+          {below}
+        </Box>
+      )
     }
 
     const { Box, Text } = $.ui.resolve(e)
@@ -187,7 +197,7 @@ export const register: Register = (on, options) => {
     const isResting = isOut && v.resetsAt !== null
     const left = isResting ? await read($, countdown) : ''
 
-    return (
+    const line = (
       <Box flexDirection="row" gap={1}>
         <Text color={BAR_COLORS[v.look]} bold>
           {text.LABEL}
@@ -198,6 +208,13 @@ export const register: Register = (on, options) => {
             ? [text.OUT_OF_LIGHT, isResting ? `${left} · ${text.relightsAt(clock)}` : ''].filter(Boolean).join(' · ')
             : usage}
         </Text>
+      </Box>
+    )
+
+    return (
+      <Box flexDirection={e.props.bodyColumns >= SIDE_BY_SIDE_COLUMNS ? 'row' : 'column'} columnGap={3}>
+        {line}
+        {below}
       </Box>
     )
   })
