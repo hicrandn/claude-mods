@@ -1,6 +1,8 @@
 {
   "name": "hicran-mods",
-  "owner": { "name": "hicrandn" },
+  "owner": {
+    "name": "hicrandn"
+  },
   "metadata": {
     "description": "Small mods for Claude Code."
   },
@@ -9,7 +11,13 @@
       "name": "usage-torch",
       "source": "./plugins/usage-torch",
       "description": "Your Claude usage limit, as a one-line torch bar above the prompt that fades as you use it.",
-      "version": "0.6.0"
+      "version": "0.7.0"
+    },
+    {
+      "name": "context-band",
+      "source": "./plugins/context-band",
+      "description": "How full the context window is, as a one-line bar above the prompt, so you know when to /compact or /clear.",
+      "version": "0.1.0"
     }
   ]
 }

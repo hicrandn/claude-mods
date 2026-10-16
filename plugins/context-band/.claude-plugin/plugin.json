@@ -1,0 +1,30 @@
+{
+  "name": "context-band",
+  "displayName": "Context Band",
+  "version": "0.1.0",
+  "description": "How full the context window is, as a one-line bar above the prompt, so you know when to /compact or /clear.",
+  "author": {
+    "name": "hicrandn"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/hicrandn/claude-mods",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "warnAtPercent": {
+      "type": "number",
+      "title": "Warm at (% used)",
+      "description": "The bar turns amber once this share of the context window is used.",
+      "default": 50,
+      "min": 1,
+      "max": 99
+    },
+    "compactAtPercent": {
+      "type": "number",
+      "title": "Compact at (% used)",
+      "description": "The bar turns red and suggests /compact once this share of the context window is used.",
+      "default": 75,
+      "min": 1,
+      "max": 100
+    }
+  }
+}
