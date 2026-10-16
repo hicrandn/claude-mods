@@ -1,7 +1,7 @@
 {
   "name": "context-band",
   "displayName": "Context Band",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "How full the context window is, as a one-line bar above the prompt, so you know when to /compact or /clear.",
   "author": {
     "name": "hicrandn"
@@ -13,7 +13,7 @@
     "warnAtPercent": {
       "type": "number",
       "title": "Warm at (% used)",
-      "description": "The bar turns amber once this share of the context window is used.",
+      "description": "The bar turns amber once this share of the way to auto-compact is used.",
       "default": 50,
       "min": 1,
       "max": 99
@@ -21,10 +21,26 @@
     "compactAtPercent": {
       "type": "number",
       "title": "Compact at (% used)",
-      "description": "The bar turns red and suggests /compact once this share of the context window is used.",
+      "description": "The bar turns red and suggests /compact once this share of the way to auto-compact is used.",
       "default": 75,
       "min": 1,
       "max": 100
+    },
+    "warnAtTokens": {
+      "type": "number",
+      "title": "Warm at (tokens)",
+      "description": "The bar turns amber once the context holds this many tokens, whatever the share. 0 turns it off.",
+      "default": 100000,
+      "min": 0,
+      "max": 10000000
+    },
+    "compactAtTokens": {
+      "type": "number",
+      "title": "Compact at (tokens)",
+      "description": "The bar turns red and suggests /compact once the context holds this many tokens, whatever the share. 0 turns it off.",
+      "default": 150000,
+      "min": 0,
+      "max": 10000000
     }
   }
 }

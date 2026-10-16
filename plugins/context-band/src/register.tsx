@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage } from 'claude-code'
 
 import type { ContextDemo, ContextLevel, ContextView } from '../types'
-import { DEFAULT_THRESHOLDS, levelFor, percentOf } from './logic.ts'
+import { DEFAULT_THRESHOLDS, levelFor, limitOf, percentOf } from './logic.ts'
 import type { Thresholds } from './logic.ts'
 import * as text from './text.ts'
 
@@ -22,6 +22,8 @@ const SIDE_BY_SIDE_COLUMNS = 110
 let thresholds: Thresholds = DEFAULT_THRESHOLDS
 // The last real reading; null before the live window's first reply.
 let real: { tokens: number; window: number } | null = null
+// Where auto-compaction runs for a window (null: it is off), asked once per window size.
+let autoCompact: { window: number; at: number | null } | null = null
 // Whether the last reading was hot: crossing into hot raises the toast once.
 let wasHot = false
 
@@ -30,18 +32,38 @@ function readingOf(context: SessionContextUsage) {
   return { tokens: context.tokens, window: context.window }
 }
 
-function shownView(window: number): ContextView {
-  if (real === null) return { level: 'calm', percent: 0, tokens: 0, window, isPending: true }
-  const percent = percentOf(real.tokens, real.window)
-  return { level: levelFor(percent, thresholds), percent, tokens: real.tokens, window: real.window }
+// The threshold comes with the context breakdown, which the summary form estimates locally and
+// sends nothing for. It moves only with the window (a model switch), so it is asked again then.
+// Where no breakdown comes back the fill counts against the whole window, as the status line does,
+// and the next reply asks again.
+async function autoCompactAt($: EngineInterface, window: number): Promise<number | null> {
+  if (autoCompact?.window === window) return autoCompact.at
+  let breakdown
+  try {
+    breakdown = (await $.session.usage({ breakdown: 'summary' })).context.breakdown
+  } catch {
+    return null
+  }
+  if (breakdown === undefined) return null
+  const at = breakdown.isAutoCompactEnabled ? (breakdown.autoCompactThreshold ?? null) : null
+  autoCompact = { window, at }
+  return at
+}
+
+function shownView(window: number, at: number | null): ContextView {
+  const limit = limitOf(window, at)
+  const isAutoCompact = limit !== window
+  if (real === null) return { level: 'calm', percent: 0, tokens: 0, limit, window, isAutoCompact, isPending: true }
+  const percent = percentOf(real.tokens, limit)
+  return { level: levelFor(percent, real.tokens, thresholds), percent, tokens: real.tokens, limit, window, isAutoCompact }
 }
 
 // Draws the real reading unless a demo holds the band; crossing into hot says what to do.
 async function showReal($: EngineInterface, context: SessionContextUsage, mayToast: boolean) {
   real = readingOf(context)
-  const next = shownView(context.window)
+  const next = shownView(context.window, await autoCompactAt($, context.window))
   const isHot = next.isPending !== true && next.level === 'hot'
-  if (mayToast && isHot && !wasHot) $.ui.toast(text.HOT_TOAST(next.percent))
+  if (mayToast && isHot && !wasHot) $.ui.toast(text.HOT_TOAST(next.tokens))
   wasHot = isHot
   if ((await read($, demo)) !== null) return
   await update($, view, () => next)
@@ -53,10 +75,12 @@ const barOf = (percent: number): string => {
 }
 
 export const register: Register = (on, options) => {
-  const { warnAtPercent, compactAtPercent } = options
+  const numberOr = (value: unknown, fallback: number): number => (typeof value === 'number' ? value : fallback)
   thresholds = {
-    warnAtPercent: typeof warnAtPercent === 'number' ? warnAtPercent : DEFAULT_THRESHOLDS.warnAtPercent,
-    compactAtPercent: typeof compactAtPercent === 'number' ? compactAtPercent : DEFAULT_THRESHOLDS.compactAtPercent,
+    warnAtPercent: numberOr(options.warnAtPercent, DEFAULT_THRESHOLDS.warnAtPercent),
+    compactAtPercent: numberOr(options.compactAtPercent, DEFAULT_THRESHOLDS.compactAtPercent),
+    warnAtTokens: numberOr(options.warnAtTokens, DEFAULT_THRESHOLDS.warnAtTokens),
+    compactAtTokens: numberOr(options.compactAtTokens, DEFAULT_THRESHOLDS.compactAtTokens),
   }
 
   on('session.start', async ($, e, next) => {
@@ -81,7 +105,8 @@ export const register: Register = (on, options) => {
 
     if (sub === 'demo' && arg === 'off') {
       await update($, demo, () => null)
-      await update($, view, () => shownView(real?.window ?? DEMO_WINDOW))
+      const window = real?.window ?? DEMO_WINDOW
+      await update($, view, () => shownView(window, autoCompact?.window === window ? autoCompact.at : null))
       return { text: text.DEMO_OFF }
     }
 
@@ -89,7 +114,7 @@ export const register: Register = (on, options) => {
     if (sub === undefined || sub === '' || sub === 'status') {
       const v = await read($, view)
       if (v === null || v.isPending === true) return { text: text.NO_READING }
-      return { text: `Context Band: ${text.fillLine(v.percent, v.tokens, v.window)}` }
+      return { text: `Context Band: ${text.statusLine(v.percent, v.tokens, v.limit, v.window, v.isAutoCompact)}` }
     }
 
     const chosen = DEMOS.find(d => d === arg)
@@ -97,7 +122,7 @@ export const register: Register = (on, options) => {
       const percent = DEMO_PERCENT[chosen]
       const tokens = Math.round((percent / 100) * DEMO_WINDOW)
       await update($, demo, () => chosen)
-      await update($, view, () => ({ level: chosen, percent, tokens, window: DEMO_WINDOW }))
+      await update($, view, () => ({ level: chosen, percent, tokens, limit: DEMO_WINDOW, window: DEMO_WINDOW, isAutoCompact: false }))
       return { text: text.DEMO_ON(chosen) }
     }
 
@@ -109,10 +134,11 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const v = await read($, view)
-    if (v === null) return next(e)
+    // A view 0.1.0 left in the session's state has no limit: pass until session.start redraws it.
+    if (v === null || typeof v.limit !== 'number') return next(e)
     const below = await next(e)
 
-    const fill = v.isPending === true ? text.WAITING : text.fillLine(v.percent, v.tokens, v.window)
+    const fill = v.isPending === true ? text.WAITING : text.fillLine(v.percent, v.tokens, v.limit)
 
     if (e.surface !== 'terminal') {
       const { Box, Text } = $.ui.resolve(e)

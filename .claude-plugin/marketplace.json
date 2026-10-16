@@ -17,7 +17,7 @@
       "name": "context-band",
       "source": "./plugins/context-band",
       "description": "How full the context window is, as a one-line bar above the prompt, so you know when to /compact or /clear.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }
